@@ -22,7 +22,7 @@
 // written by Blake Foster - http://www.blake-foster.com/contact.php
 #include <ICMPPing.h>
 
-#define GENT_VERSION "9ish"
+#define GENT_VERSION "1.0"
 #define INFO_URL "coming soon"
 
 
@@ -125,7 +125,14 @@ int portcount[1024];
 // for HostDiscovery
 byte PingedHostList[256][4];
 // for backlight
-int BacklightPin = 30;
+int BacklightPin = 46;
+// for power
+int PowerPin = 48;
+// for battery indicator
+int BatteryPin1 = 50;
+int BatteryPin2 = 52;
+// for battery monitoring
+int BatteryMonitorPin = 0;
 
 
 // print a message to a given column and row, optionally clearing the screen
@@ -137,6 +144,18 @@ void lcdPrint(int column, int row, char message[], boolean clrscreen = false)
   lcd.print(message);
 } // lcdprint
 
+// BatteryCheck returns the assumed percentage left on the battery.
+// for testing, I am using 8 AA batteries (don't get me started), for 12V.
+// The Mega stops working at 7V, and I have a voltage divider in place, returning 6V.
+// Let's see how this works.
+// Returns the actual number, not multiplied by 100
+double BatteryCheck()
+{
+  int val = 0;  
+  val = analogRead(BatteryMonitorPin);
+  float percentage = (float)val / 1023;
+  return percentage;
+}
 // Sets backlight. Backlight is controlled by a specific pin 
 // in our demo, it's Pin 30.
 void ChangeBacklight()
@@ -144,8 +163,6 @@ void ChangeBacklight()
   char buffer0[17];
   int val=0;
   val = digitalRead(BacklightPin);
-  Serial.print("Val was at 0. Is now set to: ");
-  Serial.print(val);
   if (val == 1) {
     digitalWrite(BacklightPin, LOW);
   }
@@ -154,6 +171,14 @@ void ChangeBacklight()
   }
   return;
 } // ChangeBacklight
+// Powers down system. Power is controlled by a specific pin 
+// in our demo, it's Pin 31.
+// rest of circuit is a Pololu switch
+void ShutDown()
+{
+    digitalWrite(PowerPin, HIGH);
+  return;
+} // ShutDown
 
 // This will show the items in "portcount", an array for ports.
 // Ports were determined by portScanner()
@@ -216,7 +241,6 @@ void showHostcount(int menuItems, int offset = 0)
   int buttonClick = 0;
   char buffer0[17];
   char buffer1[17];
-  Serial.println("Inside showhostcount");
   while (1)
   {
     if (buttonClick == 1) buttonClick = 0;
@@ -900,11 +924,12 @@ void infoMenu()
   myLocalIp = Ethernet.localIP();
   mySubnetMask = Ethernet.subnetMask();
 
-
   // starting out at the begining of the display
   int menuPosition = 0;
   int buttonClick = 0;
-  int menuItems = 6;
+  int menuItems = 7;
+  // initialize currentlevel
+  double currentlevel;
 
   while (1)
   {
@@ -937,7 +962,19 @@ void infoMenu()
       sprintf(line0, "MAC Address");
       sprintf(line1, "%02x%02x.%02x%02x.%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
       break;
+
     case 5:
+      sprintf(line0, "Battery voltage");
+      currentlevel = BatteryCheck();
+      currentlevel = 5 * currentlevel;
+      
+      Serial.print("InfoMenu: Voltage is listed as ");
+      Serial.println(currentlevel);
+      char voltagebuffer[6];
+      sprintf(line1, dtostrf(currentlevel, 4, 2, voltagebuffer));
+      break;
+
+    case 6:
       sprintf(line0, "Backlight");
       int val=0;
       val = digitalRead(BacklightPin);
@@ -1285,22 +1322,24 @@ int portScanner()
 // display main menu
 void mainMenu()
 {
-  char *MainMenu[7] = { 
-    "Information", "Set IP Address", "Diagnostics", "Host Discovery", "Port Scanner", "Backlight", "About"      };
+  Serial.println("mainMenu loop");
+  BatteryMonitor();
+  char *MainMenu[8] = { 
+    "Information", "Set IP Address", "Diagnostics", "Host Discovery", "Port Scanner", "Backlight", "Power Down", "About"      };
   unsigned long hostcount = 0;
   unsigned long portCount = 0;
 
-  printMenu(MainMenu, 7);
+  printMenu(MainMenu, 8);
 
   while (1)
   {
     readButtons();
 
     // up button
-    if (buttons[buttonUp] == HIGH) CursorPrevious(MainMenu, 7);
+    if (buttons[buttonUp] == HIGH) CursorPrevious(MainMenu, 8);
 
     // down button
-    if (buttons[buttonDown] == HIGH) CursorNext(MainMenu, 7);
+    if (buttons[buttonDown] == HIGH) CursorNext(MainMenu, 8);
 
     // select button
     if (buttons[buttonSelect] == HIGH)
@@ -1344,11 +1383,15 @@ void mainMenu()
         break;
 
       case 6:
+        ShutDown();
+        break;
+  
+      case 7:
         aboutMenu();
         break;
       }
 
-      printMenu(MainMenu, 7);
+      printMenu(MainMenu, 8);
     }
   }
 }
@@ -1380,13 +1423,37 @@ void readButtons()
     break;
   }
 }
-
+void BatteryMonitor()
+{
+  double BatCheck;
+  Serial.println("inside BatteryMonitor");
+  // we already have a function for checking battery, so use it
+  BatCheck = BatteryCheck();
+  // If below 4V, put the LED to red. Otherwise green.
+  // 4V = .8 of our setup
+  Serial.print("BatCheck is: ");
+  Serial.println(BatCheck);
+  if (BatCheck <= .8) {
+    digitalWrite(BatteryPin1, HIGH);
+    digitalWrite(BatteryPin2, LOW);
+  }
+  else {
+    digitalWrite(BatteryPin1, LOW);
+    digitalWrite(BatteryPin2, HIGH);
+  }
+}
+    
+    
+  
 void setup()
 {
   Serial.begin(19200);
   // set backlight pin
   pinMode(BacklightPin, OUTPUT);
   digitalWrite(BacklightPin, HIGH);
+  // set power shutdown pin
+  pinMode(PowerPin, OUTPUT);
+  digitalWrite(PowerPin, LOW);
   // set the button pins to input
   pinMode (14, INPUT);//Column 1
   pinMode (15, INPUT);//Column 2
@@ -1395,22 +1462,28 @@ void setup()
   pinMode (18, INPUT);//Row 2
   pinMode (19, INPUT);//Row 3
   pinMode (20, INPUT);//Row 4
+  pinMode(BatteryPin1, OUTPUT);
+  pinMode(BatteryPin2, OUTPUT);
+// 1 low, 2 high is green.
+// 1 high, 2 low is red.
 
   // initialize 16x2 lcd
   lcd.begin(16, 2);
-
-
-}
-
-void loop()
-{ 
+// originally in loop
   if (ethernetActive == 0)
   {
     // ethernet isnt active so lets get this show on the road
     lcdPrint(0, 0, "Requesting IP", true);
-
-    if (Ethernet.begin(mac) != 0)
+    Serial.println("Now checking for IP");
+    if (!Ethernet.begin(mac))
     {
+      Serial.println("Ethernet not working");
+      // ethernet failed to initialize, we will keep trying
+      lcdPrint(0, 1, "No DHCP");
+    }
+    else
+    {
+      Serial.println("Ethernet Active");
       // ethernet is active now
       ethernetActive = 1;
 
@@ -1427,19 +1500,55 @@ void loop()
       // 0x1F4  == 500
       W5100.setRetransmissionTime(0x1F4);
       W5100.setRetransmissionCount(1);
+
+    }
+
+  }
+} // setup
+
+void loop()
+{ 
+/*
+  if (ethernetActive == 0)
+  {
+    // ethernet isnt active so lets get this show on the road
+    lcdPrint(0, 0, "Requesting IP", true);
+    Serial.println("Now checking for IP");
+    if (!Ethernet.begin(mac))
+    {
+      Serial.println("Ethernet not working");
+      // ethernet failed to initialize, we will keep trying
+      lcdPrint(0, 1, "No DHCP");
     }
     else
     {
-      // ethernet failed to initialize, we will keep trying
-      lcdPrint(0, 1, "No DHCP");
+      Serial.println("Ethernet Active");
+      // ethernet is active now
+      ethernetActive = 1;
+
+      // waiting 1 second to let ethernet completely initialize
+      // ive seen this in other code so i put it here to be safe
+      delay(1000);
+
+      myLocalIp = Ethernet.localIP();
+      mySubnetMask = Ethernet.subnetMask();
+
+      // set connection timeout and retry count
+      // 0x07D0 == 2000
+      // 0x320  == 800
+      // 0x1F4  == 500
+      W5100.setRetransmissionTime(0x1F4);
+      W5100.setRetransmissionCount(1);
+
     }
   }
   else
   {
+*/
     // if everything seems good to go, display the main menu
     mainMenu(); 
-  }
-}
+//  }
+} // loop
 
 
 
